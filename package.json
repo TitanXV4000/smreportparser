@@ -1,13 +1,13 @@
 {
-  "name": "sfreportparser",
+  "name": "smreportparser",
   "version": "0.0.1",
-  "description": "Parse Salesforce csv reports and save to mongo",
+  "description": "Parse SMAX csv reports and save to mongo",
   "main": "index.js",
-  "repository": "https://github.com/johndwalker/sfreportparser",
+  "repository": "https://github.com/TitanXV4000/smreportparser",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "jwalker",
+  "author": "tsanford",
   "license": "ISC",
   "dependencies": {
     "chokidar": "^3.5.1",

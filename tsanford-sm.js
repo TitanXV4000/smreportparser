@@ -5,7 +5,7 @@ exports.login = run = async (browser, url, username, password, timeout, logger) 
 
   /* Go to the page and wait for it to load */
   await page.goto(url, { waitUntil: 'networkidle2' });
-  logger.debug("Salesforce initial auth page loaded.");
+  logger.debug("Service Manager initial auth page loaded.");
 
   /* Click on the SSO button */
   await Promise.all([

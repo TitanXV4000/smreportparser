@@ -13,9 +13,9 @@ RUN apt-get update -o Acquire::Check-Valid-Until=false
 RUN apt-get -y install git
 RUN apt-get -y install vim
 #RUN apt-get clean && rm -rf /var/lib/apt/lists/*
-RUN mkdir /sfexports
-RUN git clone https://github.com/TitanXV4000/sfreportparser.git
-WORKDIR /usr/src/apps/sfreportparser
+RUN mkdir /smexports
+RUN git clone https://github.com/TitanXV4000/smreportparser.git
+WORKDIR /usr/src/apps/smreportparser
 RUN npm install
 # If you are building your code for production
 # RUN npm ci --only=production
