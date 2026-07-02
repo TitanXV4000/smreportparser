@@ -1,6 +1,6 @@
 exports.MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/?poolSize=20&writeConcern=majorityw';
 exports.MONGO_DB = process.env.MONGO_DB || 'sfwb';
-exports.DOWNLOAD_PATH = process.env.DOWNLOAD_PATH || '/sfexports';
+exports.DOWNLOAD_PATH = process.env.DOWNLOAD_PATH || '/smexports';
 exports.SF_LOGIN_URL = process.env.SF_LOGIN_URL || 'https://microfocus.my.salesforce.com/5004J00000MC9o9QAD/p'
 exports.USER_LOGIN = process.env.USER_LOGIN || '';
 exports.PASS = process.env.PASS || '';
@@ -10,5 +10,5 @@ exports.EMAIL_FROM = process.env.EMAIL_FROM || '';
 exports.EMAIL_FROM_PASS = process.env.EMAIL_FROM_PASS || '';
 exports.EMAIL_TO = process.env.EMAIL_TO || '';
 exports.LOGIN_TIMEOUT = process.env.LOGIN_TIMEOUT || '22000';
-exports.SERVICE_NAME = process.env.SERVICE_NAME || 'sfreportparser';
+exports.SERVICE_NAME = process.env.SERVICE_NAME || 'smreportparser';
 exports.TIMEZONE = process.env.TIMEZONE || 'America/Denver';
