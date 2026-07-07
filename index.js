@@ -93,9 +93,21 @@ watcher
     
     logger.info(`Detected new file \'${filePath}\'. Begin parsing...`);
     var latestReport = await readFile(filePath);
-    var data = await parse(latestReport, {
-      columns: true,
-      skip_empty_lines: true
+    
+    // 1. Convert the file buffer to a clean UTF-8 string
+    let reportContent = latestReport.toString('utf8');
+    
+    // 2. Explicitly strip the hidden Byte Order Mark (\ufeff) if it exists
+    if (reportContent.startsWith('\uFEFF')) {
+        reportContent = reportContent.replace(/^\uFEFF/, '');
+    }
+
+    // 3. Pass the clean string data directly to your parser
+    var data = await parse(reportContent, {
+        columns: true,
+        skip_empty_lines: true,
+        relax_quotes: true,        // Handles loose or unescaped quotes within fields
+        trim: true                 // Trims whitespace around headers and values
     });
     logger.silly("Loaded the following data from file: " + JSON.stringify(data));
 
@@ -106,49 +118,68 @@ watcher
     for (const row of data) {
       values = Object.values(row);
       if (reportTag === "open" || reportTag === "closed") {
-        url = `https://microfocus.lightning.force.com/lightning/r/Case/${values[1]}/view`
-        urlPrintView = `https://microfocus.my.salesforce.com/${values[1]}/p`;
+        url = `https://us42-smax.saas.microfocus.com/saw/Request/${values[1]}/general?TENANTID=731633586`
+        urlPrintView = `https://us42-smax.saas.microfocus.com/saw/Request/${values[1]}/general?TENANTID=731633586`
+        const UpdatedOn = convertToSalesforceDate(values[4]);
+        const CreatedOn = convertToSalesforceDate(values[9]);
+        const ClosedDateTime = convertToSalesforceDate(values[24]);
+        // calc ageHours
+        //let ageHours = "";
+        //if (values[9]) {
+        //  ageHours = ((Date.now() - Number(values[9])) / 3600000).toFixed(1);
+        //  if (Number(ageHours) < 0) ageHours = "0.0";
+        //}
+
+        let ageHours = "";
+        if (values[9]) {
+            const totalHours = (Date.now() - Number(values[9])) / 3600000;
+            ageHours = String(Math.round(totalHours));
+            if (Number(ageHours) < 0) ageHours = "0";
+        }
+
+
         cases.unshift({
           "logTime"            : timestamp,
           "_id"                : values[0], // case number - primary identifier in mongo (indexed automatically)
-          "caseID"             : values[1],
+          "caseID"             : values[0],
           "caseOwner"          : values[2],
           "caseOwnerAlias"     : values[3],
-          "caseDate"           : values[4],
-          "subject"            : values[5],
-          "type"               : values[6],
-          "caseOrigin"         : values[7],
-          "createdBy"          : values[8],
-          "dateTimeOpened"     : values[9],
-          "ageHours"           : values[10],
-          "status"             : values[11],
-          "milestoneStatus"    : values[12],
-          "product"            : values[13],
-          "supportProduct"     : values[14],
-          "productGroup"       : values[15],
-          "severity"           : values[16],
-          "rdIncident"         : values[17],
-          "rdChangeRequest"    : values[18],
-          "contactName"        : values[19],
-          "contactEmail"       : values[20],
-          "contactPhone"       : values[21],
-          "contactRegion"      : values[22],
-          "country"            : values[23],
-          "accountName"        : values[24],
-          "businessHours"      : values[25],
-          "description"        : values[26],
-          "caseComments"       : values[27],
-          "FTSAccountName"     : values[28],
-          "FTSPassword"        : values[29],
-          "dateTimeClosed"     : values[30],
-          "closureSummary"     : values[31],
-          "closeCode"          : values[32],
-          "caseLastModifiedBy" : values[33],
-          "accountCountry"     : values[34],
+          "caseDate"           : UpdatedOn,
+          "subject"            : values[1],
+          "type"               : values[5],
+          "caseOrigin"         : values[6],
+          "createdBy"          : values[7],
+          "dateTimeOpened"     : CreatedOn,
+          "ageHours"           : ageHours,
+          "status"             : values[10],
+          "milestoneStatus"    : "Compliant",
+          "product"            : values[12],
+          "supportProduct"     : values[12],
+          "productGroup"       : values[30],
+          "severity"           : values[13],
+          "rdIncident"         : values[38],
+          "rdChangeRequest"    : "",
+          "contactName"        : values[14],
+          "contactEmail"       : values[16],
+          "contactPhone"       : values[17],
+          //"contactMobile"      : values[18],
+          "contactRegion"      : values[19],
+          "country"            : values[33],
+          "accountName"        : values[21],
+          "businessHours"      : "01m1t000000qVUj",
+          "description"        : "NOT AVAILABLE",
+          "caseComments"       : "NOT AVAILABLE",
+          "FTSAccountName"     : values[22],
+          "FTSPassword"        : values[23],
+          "dateTimeClosed"     : ClosedDateTime,
+          "closureSummary"     : "",
+          "closeCode"          : "",
+          "caseLastModifiedBy" : values[25],
+          "accountCountry"     : values[33],
           "url"                : url,
           "urlPrintView"       : urlPrintView,
-          "kbArticle"          : values[35],
-          "IdolkbLink"         : values[36],
+          "kbArticle"          : "",
+          "IdolkbLink"         : "",
         });
       } else if (reportTag === "kb") {
         url = `https://microfocus.lightning.force.com/lightning/r/Knowledge__kav/${values[1]}/view`
@@ -488,4 +519,28 @@ async function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function convertToSalesforceDate(epochMs) {
+  if (!epochMs) return "";
+  
+  const date = new Date(Number(epochMs));
+  
+  // Configure formatting options to match standard US format
+  const options = {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+    timeZone: 'America/Denver' // Keeps the timezone aligned with your local mountain time logs
+  };
+
+  // Intl.DateTimeFormat outputs standard formats cleanly
+  const formatter = new Intl.DateTimeFormat('en-US', options);
+  
+  // Replace the narrow/non-breaking space character with a standard space if necessary
+  return formatter.format(date).replace(/[\u202f\u2016]/g, ' ');
 }
