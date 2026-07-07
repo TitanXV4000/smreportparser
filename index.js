@@ -118,8 +118,8 @@ watcher
     for (const row of data) {
       values = Object.values(row);
       if (reportTag === "open" || reportTag === "closed") {
-        url = `https://us42-smax.saas.microfocus.com/saw/Request/${values[1]}/general?TENANTID=731633586`
-        urlPrintView = `https://us42-smax.saas.microfocus.com/saw/Request/${values[1]}/general?TENANTID=731633586`
+        url = `https://us42-smax.saas.microfocus.com/saw/Request/${values[0]}/general?TENANTID=731633586`
+        urlPrintView = `https://us42-smax.saas.microfocus.com/saw/Request/${values[0]}/general?TENANTID=731633586`
         const UpdatedOn = convertToSalesforceDate(values[4]);
         const CreatedOn = convertToSalesforceDate(values[9]);
         const ClosedDateTime = convertToSalesforceDate(values[24]);
@@ -137,6 +137,26 @@ watcher
             if (Number(ageHours) < 0) ageHours = "0";
         }
 
+        const statusMap = {
+            "RequestStatusClosed_c":          "Closed",
+            "RequestStatusComplete":          "Solution Suggested",
+            "RequestStatusInProgress":        "Pending Support",
+            "RequestStatusNeedsAttention_c":  "Pending Support (New Activity)",
+            "RequestStatusPending":           "Pending Customer",
+            "RequestStatusPendingInternal_c": "Pending Internal",
+            "RequestStatusReady":             "New",
+            "RequestStatusSuspended":         "Suspended"
+        };
+        const status = statusMap[values[10]] || values[10];
+
+        // 1. Severity Mapping Table
+        const severityMap = {
+            "CriticalPriority": "1 - Critical",
+            "HighPriority":     "2 - High",
+            "MediumPriority":   "3 - Medium",
+            "Low Priority":     "4 - Low" // Handled exactly as written in your source data
+        };
+        const severity = severityMap[values[13]] || values[13];
 
         cases.unshift({
           "logTime"            : timestamp,
@@ -151,12 +171,12 @@ watcher
           "createdBy"          : values[7],
           "dateTimeOpened"     : CreatedOn,
           "ageHours"           : ageHours,
-          "status"             : values[10],
+          "status"             : status,
           "milestoneStatus"    : "Compliant",
           "product"            : values[12],
           "supportProduct"     : values[12],
           "productGroup"       : values[30],
-          "severity"           : values[13],
+          "severity"           : severity,
           "rdIncident"         : values[38],
           "rdChangeRequest"    : "",
           "contactName"        : values[14],
