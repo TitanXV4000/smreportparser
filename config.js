@@ -1,5 +1,5 @@
 exports.MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/?poolSize=20&writeConcern=majorityw';
-exports.MONGO_DB = process.env.MONGO_DB || 'sfwb';
+exports.MONGO_DB = process.env.MONGO_DB || 'smwb';
 exports.DOWNLOAD_PATH = process.env.DOWNLOAD_PATH || '/smexports';
 exports.SF_LOGIN_URL = process.env.SF_LOGIN_URL || 'https://microfocus.my.salesforce.com/5004J00000MC9o9QAD/p'
 exports.USER_LOGIN = process.env.USER_LOGIN || '';
