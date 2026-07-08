@@ -158,6 +158,21 @@ watcher
         };
         const severity = severityMap[values[13]] || values[13];
 
+        // Map raw SMAX CreationSource enums to clean, short dashboard values
+        const sourceMap = {
+            "CreationSourceLiveSupport" : "Support",
+            "CreationSourceEss"         : "Web",
+            "CreationSourceOther"       : "Other",
+            "CreationSourceEssChat"     : "Chat",
+            "CreationSourceExternal"    : "External",
+            "CreationSourceMobile"      : "Mobile",
+            "CreationSourceVA"          : "Virt Agent",
+            "CreationSourceSAM"         : "SAM",
+            "CreationSourceXIE"         : "Int Studio",
+            "CreationSourceTeams"       : "Teams"
+        };
+        const caseOrigin = sourceMap[values[6]] || values[6];
+
         cases.unshift({
           "logTime"            : timestamp,
           "_id"                : values[0], // case number - primary identifier in mongo (indexed automatically)
@@ -167,7 +182,7 @@ watcher
           "caseDate"           : UpdatedOn,
           "subject"            : values[1],
           "type"               : values[5],
-          "caseOrigin"         : values[6],
+          "caseOrigin"         : caseOrigin,
           "createdBy"          : values[7],
           "dateTimeOpened"     : CreatedOn,
           "ageHours"           : ageHours,
