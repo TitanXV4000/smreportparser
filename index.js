@@ -162,7 +162,7 @@ watcher
           "logTime"            : timestamp,
           "_id"                : values[0], // case number - primary identifier in mongo (indexed automatically)
           "caseID"             : values[0],
-          "caseOwner"          : values[2],
+          "caseOwner"          : (values[2] && values[2].trim()) ? values[2].trim() : "MFI Support",
           "caseOwnerAlias"     : values[3],
           "caseDate"           : UpdatedOn,
           "subject"            : values[1],
