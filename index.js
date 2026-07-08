@@ -173,6 +173,11 @@ watcher
         };
         const caseOrigin = sourceMap[values[6]] || values[6];
 
+        const rawRegion = values[19] ? values[19].trim() : '';
+        const regionOnly = rawRegion.includes('/') ? rawRegion.split('/')[0] : rawRegion;
+
+        //logger.info(`rawRegion = \'${rawRegion}\' regionOnly = \'${regionOnly}\' `);
+
         cases.unshift({
           "logTime"            : timestamp,
           "_id"                : values[0], // case number - primary identifier in mongo (indexed automatically)
@@ -198,8 +203,8 @@ watcher
           "contactEmail"       : values[16],
           "contactPhone"       : values[17],
           //"contactMobile"      : values[18],
-          "contactRegion"      : values[19],
-          "country"            : values[33],
+          "contactRegion"      : regionOnly || 'Unknown',
+          "country"            : values[34],
           "accountName"        : values[21],
           "businessHours"      : "01m1t000000qVUj",
           "description"        : "NOT AVAILABLE",
@@ -210,7 +215,7 @@ watcher
           "closureSummary"     : "",
           "closeCode"          : "",
           "caseLastModifiedBy" : values[25],
-          "accountCountry"     : values[33],
+          "accountCountry"     : values[34],
           "url"                : url,
           "urlPrintView"       : urlPrintView,
           "kbArticle"          : "",
