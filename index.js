@@ -4,13 +4,11 @@ tsanford
 */
 const config = require('./config');
 const { MongoClient } = require('mongodb');
-const puppeteer = require('puppeteer');
 const fs = require('fs');
 const chokidar = require('chokidar');
 const parse = require('csv-parse/lib/sync');
 const tsanfordLogger = require('tsanford-logger');
 const nodemailer = require('nodemailer');
-const sf = require('./tsanford-sm');
 const emitter = require('events').EventEmitter;
 const path = require('path');
 
@@ -25,7 +23,6 @@ const transporter = nodemailer.createTransport({
 
 // Consolidated into a single cases collection
 const MONGO_CASES_COLLECTION = 'cases';
-const MONGO_UNASSIGNED_COLLECTION = 'unassigned';
 
 var lastUpdateTime;
 
@@ -40,10 +37,6 @@ casesUpdatedEmitter
   .on('cases updated', async function(cases) {
     logger.debug("Received 'cases updated' event from casesUpdatedEmitter.");
     // Cross-collection cleanups removed; Mongo upsert handles lifecycle state changes dynamically.
-  })
-  .on('unassigned updated', async function(mfiSupportCases) {
-    logger.debug("Received 'unassigned updated' event from casesUpdatedEmitter.");
-    // await updateAssigned(mfiSupportCases);
   })
   .on('csv parsed', async function(filename) {
     logger.debug("Received 'csv parsed' event from casesUpdatedEmitter.");
@@ -118,108 +111,53 @@ watcher
     for (const row of data) {
       values = Object.values(row);
       if (reportTag === "open" || reportTag === "closed") {
-        url = `https://us42-smax.saas.microfocus.com/saw/Request/${values[0]}/general?TENANTID=731633586`
-        urlPrintView = `https://us42-smax.saas.microfocus.com/saw/Request/${values[0]}/general?TENANTID=731633586`
-        const UpdatedOn = convertToSalesforceDate(values[4]);
-        const CreatedOn = convertToSalesforceDate(values[9]);
-        const ClosedDateTime = convertToSalesforceDate(values[24]);
-        // calc ageHours
-        //let ageHours = "";
-        //if (values[9]) {
-        //  ageHours = ((Date.now() - Number(values[9])) / 3600000).toFixed(1);
-        //  if (Number(ageHours) < 0) ageHours = "0.0";
-        //}
+        // Store the raw OTSM values. Salesforce-style formatting for the
+        // current qmon client is done by the PHP pages (see otsm_sf.php).
+        url = `https://us42-smax.saas.microfocus.com/saw/Request/${values[0]}/general?TENANTID=829453953`
 
-        let ageHours = "";
-        if (values[9]) {
-            const totalHours = (Date.now() - Number(values[9])) / 3600000;
-            ageHours = String(Math.round(totalHours));
-            if (Number(ageHours) < 0) ageHours = "0";
-        }
+        //Calc caseOwner ("Last, First" -> "First Last"). Blank stays blank (unassigned).
+        const finalOwner = lastFirstToFirstLast(values[2]);
 
-        const statusMap = {
-            "RequestStatusClosed_c":          "Closed",
-            "RequestStatusComplete":          "Solution Suggested",
-            "RequestStatusInProgress":        "Pending Support",
-            "RequestStatusNeedsAttention_c":  "Pending Support (New Activity)",
-            "RequestStatusPending":           "Pending Customer",
-            "RequestStatusPendingInternal_c": "Pending Internal",
-            "RequestStatusReady":             "New",
-            "RequestStatusSuspended":         "Suspended"
-        };
-        const status = statusMap[values[10]] || values[10];
-
-        // 1. Severity Mapping Table
-        const severityMap = {
-            "CriticalPriority": "1 - Critical",
-            "HighPriority":     "2 - High",
-            "MediumPriority":   "3 - Medium",
-            "Low Priority":     "4 - Low" // Handled exactly as written in your source data
-        };
-        const severity = severityMap[values[13]] || values[13];
-
-        // Map raw SMAX CreationSource enums to clean, short dashboard values
-        const sourceMap = {
-            "CreationSourceLiveSupport" : "Support",
-            "CreationSourceEss"         : "Web",
-            "CreationSourceOther"       : "Other",
-            "CreationSourceEssChat"     : "Chat",
-            "CreationSourceExternal"    : "External",
-            "CreationSourceMobile"      : "Mobile",
-            "CreationSourceVA"          : "Virt Agent",
-            "CreationSourceSAM"         : "SAM",
-            "CreationSourceXIE"         : "Int Studio",
-            "CreationSourceTeams"       : "Teams"
-        };
-        const caseOrigin = sourceMap[values[6]] || values[6];
-
-        const rawRegion = values[19] ? values[19].trim() : '';
-        const regionOnly = rawRegion.includes('/') ? rawRegion.split('/')[0] : rawRegion;
-
-        //logger.info(`rawRegion = \'${rawRegion}\' regionOnly = \'${regionOnly}\' `);
+        //Calc contactName ("Last, First" -> "First Last")
+        const finalContact = lastFirstToFirstLast(values[14]);
 
         cases.unshift({
           "logTime"            : timestamp,
           "_id"                : values[0], // case number - primary identifier in mongo (indexed automatically)
           "caseID"             : values[0],
-          "caseOwner"          : (values[2] && values[2].trim()) ? values[2].trim() : "MFI Support",
+          "caseOwner"          : finalOwner,
           "caseOwnerAlias"     : values[3],
-          "caseDate"           : UpdatedOn,
+          "caseDate"           : toDate(values[4]),
           "subject"            : values[1],
           "type"               : values[5],
-          "caseOrigin"         : caseOrigin,
+          "caseOrigin"         : values[6],
           "createdBy"          : values[7],
-          "dateTimeOpened"     : CreatedOn,
-          "ageHours"           : ageHours,
-          "status"             : status,
-          "milestoneStatus"    : "Compliant",
+          "dateTimeOpened"     : toDate(values[9]),
+          "status"             : values[10],
           "product"            : values[12],
-          "supportProduct"     : values[12],
+          "productModel"       : values[40],
           "productGroup"       : values[30],
-          "severity"           : severity,
+          "severity"           : values[13],
           "rdIncident"         : values[38],
-          "rdChangeRequest"    : "",
-          "contactName"        : values[14],
+          "contactName"        : finalContact,
           "contactEmail"       : values[16],
           "contactPhone"       : values[17],
           //"contactMobile"      : values[18],
-          "contactRegion"      : regionOnly || 'Unknown',
+          "contactRegion"      : values[19],
           "country"            : values[34],
           "accountName"        : values[21],
-          "businessHours"      : "01m1t000000qVUj",
-          "description"        : "NOT AVAILABLE",
-          "caseComments"       : "NOT AVAILABLE",
           "FTSAccountName"     : values[22],
-          "FTSPassword"        : values[23],
-          "dateTimeClosed"     : ClosedDateTime,
-          "closureSummary"     : "",
-          "closeCode"          : "",
+          "FTSPassword"        : values[23] ? values[23].trimStart() : values[23], // the report adds leading spaces
+          "dateTimeClosed"     : toDate(values[24]),
+          // by header name, so these columns can be anywhere in the report
+          "closeTime"          : toDate(row["Close time"]),
+          "dateTimeResolved"   : toDate(row["Resolved DateTime"]),
+          "closeCode"          : row["Closure Code.Display label"] || "", // by header name, so the column can be anywhere in the report
+          "closeCodeId"        : row["Closure Code.Id"] || "",
+          "phaseId"            : values[29],
           "caseLastModifiedBy" : values[25],
           "accountCountry"     : values[34],
           "url"                : url,
-          "urlPrintView"       : urlPrintView,
-          "kbArticle"          : "",
-          "IdolkbLink"         : "",
         });
       } else if (reportTag === "kb") {
         url = `https://microfocus.lightning.force.com/lightning/r/Knowledge__kav/${values[1]}/view`
@@ -302,206 +240,6 @@ async function upsertToCollection(collection, docs) {
   logger.info(`Upserted ${result.nUpserted} documents to ${collection.collectionName}.`);
 }
 
-/* Deletes objects from a collection. */
-async function deleteDocuments(collection, docs) {
-  try {
-    logger.debug(`Deleting documents from collection \'${collection.collectionName}\'`);
-    const bulkOps = [];
-
-    for (const doc of docs) {
-      const filter = { _id: doc._id };
-      bulkOps.push(
-        { deleteOne :
-          {
-            "filter" : filter
-          }
-        }
-      );
-    }
-
-    const result = await collection.bulkWrite(bulkOps);
-    logger.info(`Deleted ${result.nRemoved} documents from ${collection.collectionName}.`);
-  } catch (e) {
-    logger.error(`Caught error in deleteDocuments: ${e.toLocaleString()}`);
-  }
-}
-
-/* Query for all open cases with owner 'MFI Support' and add to unassigned collection */
-async function updateUnassigned() {
-  logger.info("Updating unassigned collection (frontline).");
-  const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
-
-  try {
-    logger.debug("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
-    await client.connect();
-    const database = client.db(config.MONGO_DB);
-    await database.command({ ping: 1 });
-    logger.debug("Connected successfully to mongo server.");
-
-    database.createCollection(MONGO_UNASSIGNED_COLLECTION, function (e) {
-      if (e) logger.debug(e.toLocaleString());
-    });
-    
-    // Updated to pull from unified cases collection filtering by status
-    const casesCollection = database.collection(MONGO_CASES_COLLECTION);
-    const unassignedCollection = database.collection(MONGO_UNASSIGNED_COLLECTION);
-
-    // Filter by MFI Support and exclude Closed statuses
-    const query = { caseOwner: "MFI Support", status: { $ne: "Closed" } };
-    const options = { sort: { dateTimeOpened: 1 } };
-
-    const mfiSupportCases = casesCollection.find(query, options);
-    logger.debug(`Found ${await mfiSupportCases.count()} cases.`);
-    
-    await mfiSupportCases.forEach(function(i) {
-      logger.silly(`mfiSupportCases: ${i._id}`);
-    });
-
-    const mfiSupportCasesArray = await mfiSupportCases.toArray();
-    await upsertToCollection(unassignedCollection, mfiSupportCasesArray);
-
-    casesUpdatedEmitter.emit('unassigned updated', mfiSupportCasesArray);
-  } catch (e) {
-    logger.error(e.toLocaleString());
-  } finally {
-    client.close();
-    logger.debug("Mongo connection closed.");
-  }
-}
-
-/* Compare new MFI Support cases against previous records and update fields */
-async function updateAssigned(mfiSupportCases) {
-  logger.info("Updating fields of assigned cases.");
-  const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
-  try {
-    logger.debug("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
-    await client.connect();
-    const database = client.db(config.MONGO_DB);
-    await database.command({ ping: 1 });
-    logger.debug("Connected successfully to mongo server.");
-
-    const casesCollection = database.collection(MONGO_CASES_COLLECTION);
-    const unassignedCollection = database.collection(MONGO_UNASSIGNED_COLLECTION);
-    
-    const moveQueue = [];
-    const previousCases = unassignedCollection.find();
-    logger.debug("Updating existing cases in mongo that are no longer in the queue...");
-    await previousCases.forEach(function(i) {
-      let exists = false;
-
-      for (const value of mfiSupportCases) {
-        if (value._id === i._id) {
-          logger.silly("Case " + i._id + " is still in the queue. Skipping...");
-          exists = true;
-        }
-      }
-
-      if (!exists) {
-        logger.debug("Found a case that is no longer in the queue.");
-        moveQueue.unshift(i);
-      }
-    });
-
-    if (moveQueue.length > 0) {
-      logger.debug(`Detected ${moveQueue.length} newly-assigned cases. Preparing to update documents.`);
-
-      await updateFields(moveQueue);
-      await deleteDocuments(unassignedCollection, moveQueue);
-      await upsertToCollection(casesCollection, moveQueue);
-
-      logger.debug("Mongo updated successfully.");
-    } else {
-      logger.info("No cases need to be updated at this time.");
-    }
-  } catch (e) {
-    logger.error(e.toLocaleString());
-  } finally {
-    client.close();
-    logger.debug("Mongo connection closed.");
-  }
-}
-
-async function updateFields(moveQueue) {
-  logger.debug("In updateFields() function.");
-  try {
-    var browser = await puppeteer.launch({
-      args: ['--no-sandbox'],
-    });
-    const context = browser.defaultBrowserContext();
-    context.overridePermissions(url, ["notifications"]);
-
-    logger.debug("Browser loaded.");
-
-    const page = await sf.login(
-      browser, 
-      config.SF_LOGIN_URL, 
-      config.USER_LOGIN, 
-      config.PASS, 
-      config.LOGIN_TIMEOUT, 
-      logger
-    );
-    var count = 1;
-    for (var _case of moveQueue) {
-      logger.debug(`${count++} / ${moveQueue.length}`);
-      if (!_case) {
-        logger.error("null entry found in moveQueue. Skipping...");
-        break;
-      }
-
-      logger.silly("_case: " + (JSON.stringify(_case))._id);
-      logger.debug("Looping through cases in moveQueue - querying for new owner for case " + _case._id + ".");
-      if (!_case.urlPrintView) {
-        _case.urlPrintView = urlPrintView = `https://microfocus.my.salesforce.com/${_case.caseID}/p`;
-        logger.debug("Added urlPrintView: " + _case.urlPrintView);
-      }
-
-      const newFields = await evaluatePage(page, _case.urlPrintView);
-      logger.debug("newFields: " + JSON.stringify(newFields));
-
-      if (!newFields.owner) { 
-        throw new Error("newFields empty. Skipping mongo update.");
-      }
-
-      _case.caseOwner      = newFields.owner;
-      _case.caseOwnerAlias = newFields.owner;
-      _case.product        = newFields.product;
-      _case.subject        = newFields.subject;
-    }
-    logger.info('Finished updating new fields.');
-  } catch (e) {
-    logger.error("Throwing error from updateFields().");
-    throw (e);
-  } finally {
-    await browser.close();
-    logger.debug("Browser closed.");
-  }
-}
-
-async function evaluatePage(page, url) {
-  logger.debug("Updating fields for [" + url + "].");
-  logger.debug("page.goto: " + url);
-  await page.goto(url, { waitUntil: 'networkidle2' });
-  logger.debug("calling sf.waitForNetworkIdle(2000)...");
-  sf.waitForNetworkIdle(page, 5000, 0);
-  logger.debug("done");
-  
-  return await page.evaluate(() => {
-    const owner = document.querySelector(
-      "#mainTable > div.pbBody > div:nth-child(15) > table > tbody > tr:nth-child(4) > td.dataCol.last.col02"
-    ).innerText;
-
-    const product = document.querySelector(
-      "#mainTable > div.pbBody > div:nth-child(7) > table > tbody > tr:nth-child(1) > td:nth-child(4)"
-    ).innerText;
-
-    const subject = document.querySelector(
-      "#mainTable > div.pbBody > div:nth-child(3) > table > tbody > tr:nth-child(5) > td.dataCol.col02"
-    ).innerText;
-
-    return { owner, product, subject };
-  });
-}
-
 /* Sends an error if no new files have been detected in at least 2 minutes */
 async function checkLastUpdateTime() {
   let finished = false;
@@ -561,26 +299,18 @@ async function sleep(ms) {
   });
 }
 
-function convertToSalesforceDate(epochMs) {
-  if (!epochMs) return "";
-  
-  const date = new Date(Number(epochMs));
-  
-  // Configure formatting options to match standard US format
-  const options = {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-    timeZone: 'America/Denver' // Keeps the timezone aligned with your local mountain time logs
-  };
+/* Converts an OTSM epoch-milliseconds value to a Date (stored as a Mongo date). */
+function toDate(epochMs) {
+  if (!epochMs) return null;
+  return new Date(Number(epochMs));
+}
 
-  // Intl.DateTimeFormat outputs standard formats cleanly
-  const formatter = new Intl.DateTimeFormat('en-US', options);
-  
-  // Replace the narrow/non-breaking space character with a standard space if necessary
-  return formatter.format(date).replace(/[\u202f\u2016]/g, ' ');
+/* "Last, First" -> "First Last". Values without a comma are returned trimmed. */
+function lastFirstToFirstLast(name) {
+  const raw = name ? name.trim() : '';
+  if (!raw.includes(',')) return raw;
+  const firstCommaIndex = raw.indexOf(',');
+  const lastName = raw.substring(0, firstCommaIndex).trim();
+  const restOfName = raw.substring(firstCommaIndex + 1).trim();
+  return `${restOfName} ${lastName}`.trim();
 }
