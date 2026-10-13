@@ -111,54 +111,57 @@ watcher
     for (const row of data) {
       values = Object.values(row);
       if (reportTag === "open" || reportTag === "closed") {
-        // Store the raw OTSM values. Salesforce-style formatting for the
-        // current qmon client is done by the PHP pages (see otsm_sf.php).
-        url = `https://us42-smax.saas.microfocus.com/saw/Request/${values[0]}/general?TENANTID=829453953`
+        // Store the raw OTSM values under names that follow the report headers.
+        // Columns are read by header name, so their order in the report doesn't matter.
+        // Salesforce-style formatting for the current qmon client is done by the
+        // PHP pages (see otsm_sf.php).
+        const col = (name) => (row[name] === undefined || row[name] === null) ? "" : String(row[name]);
+        const caseId = col("Id");
+        url = `https://us42-smax.saas.microfocus.com/saw/Request/${caseId}/general?TENANTID=829453953`
 
-        //Calc caseOwner ("Last, First" -> "First Last"). Blank stays blank (unassigned).
-        const finalOwner = lastFirstToFirstLast(values[2]);
-
-        //Calc contactName ("Last, First" -> "First Last")
-        const finalContact = lastFirstToFirstLast(values[14]);
-
-        cases.unshift({
-          "logTime"            : timestamp,
-          "_id"                : values[0], // case number - primary identifier in mongo (indexed automatically)
-          "caseID"             : values[0],
-          "caseOwner"          : finalOwner,
-          "caseOwnerAlias"     : values[3],
-          "caseDate"           : toDate(values[4]),
-          "subject"            : values[1],
-          "type"               : values[5],
-          "caseOrigin"         : values[6],
-          "createdBy"          : values[7],
-          "dateTimeOpened"     : toDate(values[9]),
-          "status"             : values[10],
-          "product"            : values[12],
-          "productModel"       : values[40],
-          "productGroup"       : values[30],
-          "severity"           : values[13],
-          "rdIncident"         : values[38],
-          "contactName"        : finalContact,
-          "contactEmail"       : values[16],
-          "contactPhone"       : values[17],
-          //"contactMobile"      : values[18],
-          "contactRegion"      : values[19],
-          "country"            : values[34],
-          "accountName"        : values[21],
-          "FTSAccountName"     : values[22],
-          "FTSPassword"        : values[23] ? values[23].trimStart() : values[23], // the report adds leading spaces
-          "dateTimeClosed"     : toDate(values[24]),
-          // by header name, so these columns can be anywhere in the report
-          "closeTime"          : toDate(row["Close time"]),
-          "dateTimeResolved"   : toDate(row["Resolved DateTime"]),
-          "closeCode"          : row["Closure Code.Display label"] || "", // by header name, so the column can be anywhere in the report
-          "closeCodeId"        : row["Closure Code.Id"] || "",
-          "phaseId"            : values[29],
-          "caseLastModifiedBy" : values[25],
-          "accountCountry"     : values[34],
-          "url"                : url,
-        });
+        const doc = {
+          "logTime"                 : timestamp,
+          "_id"                     : caseId, // case number - primary identifier in mongo (indexed automatically)
+          "title"                   : col("Title"),
+          "ownerName"               : lastFirstToFirstLast(col("Owner.Name")), // "Last, First" -> "First Last"; blank = unassigned
+          "updatedOn"               : toDate(col("Updated On")),
+          "caseType"                : col("Case Type"),
+          "creationSource"          : col("Creation source"),
+          "requestedByName"         : col("Requested by.Name"),
+          "createdOn"               : toDate(col("Created On")),
+          "status"                  : col("Status"),
+          "product"                 : col("Product.Display label"),
+          "priority"                : col("Priority"),
+          "requestedForName"        : lastFirstToFirstLast(col("Requested for.Name")),
+          "requestedForEmail"       : col("Requested for.Email"),
+          "requestedForOfficePhone" : col("Requested for.Office phone number"),
+          "requestedForMobilePhone" : col("Requested for.Mobile phone number"),
+          "requestedForTimeZone"    : col("Requested for.Time zone"),
+          "companyName"             : col("Requested for company.Display Name"),
+          "companyTimeZone"         : col("Requested for company.Time zone"),
+          "companyRegion"           : col("Requested for company.Headquarters (Region)"),
+          "ftsHostAccount"          : col("FTS Host Account"),
+          "ftsHostPassword"         : col("FTS Host Password").trimStart(), // the report adds leading spaces
+          "closedDateTime"          : toDate(col("Closed DateTime")),
+          "lastUpdatedByName"       : col("Last Updated By.Name"),
+          "sltNextTargetTime"       : toDate(col("SLT.Next target time")),
+          "phaseId"                 : col("Phase Id"),
+          "assignmentGroupName"     : col("Assignment group.Name"),
+          "customerTimeZone"        : col("Customer Time Zone"),
+          "country"                 : col("Country of Service.Display label"),
+          "productDevId"            : col("Product Dev ID"),
+          "productModel"            : col("Product Model.Display label"),
+          "closureCode"             : col("Closure Code.Display label"),
+          "resolvedDateTime"        : toDate(col("Resolved DateTime")),
+          "closeTime"               : toDate(col("Close time")),
+          "reportLocation"          : col("Report location.Display label"),  // requester's location, e.g. "NA/MEX"
+          "reportLocationName"      : col("Report location.Display Name"),   // e.g. "Mexico"
+          "url"                     : url,
+        };
+        const loc = customerLocation(doc);
+        doc.customerRegion  = loc.region;
+        doc.customerCountry = loc.country;
+        cases.unshift(doc);
       } else if (reportTag === "kb") {
         url = `https://microfocus.lightning.force.com/lightning/r/Knowledge__kav/${values[1]}/view`
         cases.unshift({
@@ -220,6 +223,11 @@ async function uploadToMongo(collectionName, cases) {
 /* Uses bulkWrite to quickly upsert documents to the specified collection */
 async function upsertToCollection(collection, docs) {
   logger.debug(`Upserting documents to ${collection.collectionName}.`);
+  if (docs.length === 0) {
+    // An empty report (e.g. a filter in the OTSM report that matches nothing). bulkWrite would fail.
+    logger.warn(`Report had no cases; nothing to write to ${collection.collectionName}.`);
+    return;
+  }
   const bulkOps = [];
 
   for (const doc of docs) {
@@ -297,6 +305,108 @@ async function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+/* Customer region and country, worked out from the requester's location.
+   OTSM locations look like "NA/MEX" (region/country code). OTSM has no Latin
+   America region, so Latin American countries in NA become LATAM.
+   "NA/CAN" is also what OTSM shows when a person's location was never set, so it
+   only counts as Canada when something else points to Canada. Otherwise a Latin
+   American email address means LATAM, then the company's headquarters region is
+   used, then the customer time zone. */
+const LATAM_COUNTRIES = new Set([
+  'ARG', 'BLZ', 'BOL', 'BRA', 'CHL', 'COL', 'CRI', 'CUB', 'DOM', 'ECU', 'GTM', 'GUY', 'HND', 'HTI',
+  'JAM', 'MEX', 'NIC', 'PAN', 'PER', 'PRI', 'PRY', 'SLV', 'SUR', 'TTO', 'URY', 'VEN',
+]);
+const REGIONS = new Set(['NA', 'LATAM', 'EMEA', 'APAC']);
+
+function customerLocation(doc) {
+  const loc = doc.reportLocation.trim();
+  const [locRegion, locCode] = loc.split('/');
+  const country = cleanCountryName(doc.reportLocationName);
+
+  if (loc && loc !== 'NA/CAN' && locCode) {
+    const region = (locRegion === 'NA' && LATAM_COUNTRIES.has(locCode)) ? 'LATAM' : locRegion;
+    return { region: region, country: country };
+  }
+  if (loc === 'NA/CAN' && looksCanadian(doc)) {
+    return { region: 'NA', country: country || 'Canada' };
+  }
+  const latam = latamFromEmail(doc.requestedForEmail);
+  if (latam) return latam;
+  const hq = doc.companyRegion.trim();
+  if (REGIONS.has(hq)) return { region: hq, country: '' };
+  const tzRegion = timeZoneRegion(doc.customerTimeZone) || timeZoneRegion(doc.companyTimeZone);
+  return { region: tzRegion || 'Unknown', country: '' };
+}
+
+/* Latin America from the requester's email address, for when the location
+   isn't usable: a Latin American country domain (e.g. .com.br, .mx), or a
+   company domain with "latam" in it (e.g. ot-latam.com, country unknown). */
+const LATAM_EMAIL_COUNTRIES = {
+  ar: 'Argentina', bo: 'Bolivia', br: 'Brazil', cl: 'Chile', co: 'Colombia', cr: 'Costa Rica',
+  cu: 'Cuba', do: 'Dominican Republic', ec: 'Ecuador', gt: 'Guatemala', hn: 'Honduras', mx: 'Mexico',
+  ni: 'Nicaragua', pa: 'Panama', pe: 'Peru', pr: 'Puerto Rico', py: 'Paraguay', sv: 'El Salvador',
+  uy: 'Uruguay', ve: 'Venezuela',
+};
+function latamFromEmail(email) {
+  const domain = (email || '').trim().toLowerCase().split('@')[1] || '';
+  const parts = domain.split('.');
+  const tld = parts[parts.length - 1];
+  // .co on its own is also used by companies outside Colombia; only count .com.co, .gov.co...
+  const isCountryDomain = LATAM_EMAIL_COUNTRIES[tld] && (tld !== 'co' || /^(com|gov|edu|org|net|mil)$/.test(parts[parts.length - 2] || ''));
+  if (isCountryDomain) return { region: 'LATAM', country: LATAM_EMAIL_COUNTRIES[tld] };
+  if (/latam/.test(domain)) return { region: 'LATAM', country: '' };
+  return null;
+}
+
+/* Does anything besides the location say the requester is in Canada? */
+const CANADA_TIME_ZONES = /^(Canada\/|America\/(Toronto|Vancouver|Edmonton|Winnipeg|Halifax|Regina|St_Johns|Moncton|Whitehorse)$)/;
+const CANADA_AREA_CODES = new Set(('204 226 236 249 250 263 289 306 343 354 365 367 368 382 403 416 418 428 431 437 438 450 ' +
+  '468 474 506 514 519 548 579 581 584 587 604 613 639 647 672 683 705 709 742 753 778 780 782 807 819 825 867 873 879 902 905').split(' '));
+
+function looksCanadian(doc) {
+  if (/\.ca$/i.test(doc.requestedForEmail.trim())) return true;
+  if (/canada/i.test(doc.companyName)) return true;
+  if (CANADA_TIME_ZONES.test(doc.customerTimeZone)) return true;
+  // Phone area codes only for North American companies: some Indian mobile numbers
+  // start with the same digits as Canadian area codes (902, 905).
+  if (doc.companyRegion.trim() === 'NA') {
+    for (const phone of [doc.requestedForMobilePhone, doc.requestedForOfficePhone]) {
+      let digits = phone.replace(/\D/g, '');
+      if (digits.length === 11 && digits[0] === '1') digits = digits.substring(1);
+      if (digits.length === 10 && CANADA_AREA_CODES.has(digits.substring(0, 3))) return true;
+    }
+  }
+  return false;
+}
+
+/* Region from an IANA time zone name, e.g. "Europe/Berlin" -> "EMEA". */
+const LATAM_TIME_ZONES = /^(America\/(Sao_Paulo|Mexico_City|Monterrey|Bogota|Buenos_Aires|Argentina\/.*|Santiago|Lima|Caracas|Montevideo|Asuncion|La_Paz|Guatemala|Costa_Rica|Panama|Havana|Santo_Domingo|Puerto_Rico|Guayaquil|El_Salvador|Tegucigalpa|Managua)|Brazil\/.*|Mexico\/.*|Chile\/.*)$/;
+const EMEA_ASIA_TIME_ZONES = /^Asia\/(Dubai|Riyadh|Qatar|Kuwait|Bahrain|Muscat|Tehran|Jerusalem|Tel_Aviv|Beirut|Amman|Baghdad|Baku|Tbilisi|Yerevan|Almaty|Tashkent|Samarkand|Nicosia)$/;
+
+function timeZoneRegion(tz) {
+  tz = (tz || '').trim();
+  if (!tz) return '';
+  if (LATAM_TIME_ZONES.test(tz)) return 'LATAM';
+  if (/^(America|Canada|US)\//.test(tz)) return 'NA';
+  if (/^(Europe|Africa)\//.test(tz) || /^(Egypt|Turkey|Israel|Iran|GB|Eire)$/.test(tz) || EMEA_ASIA_TIME_ZONES.test(tz)) return 'EMEA';
+  if (/^(Asia|Australia|Pacific|Indian)\//.test(tz) || /^(Japan|Singapore|Hongkong|PRC|ROC|ROK|NZ)$/.test(tz)) return 'APAC';
+  return '';
+}
+
+/* OTSM country names are the long ISO forms, e.g. "United States of America (the)",
+   "Taiwan (Province of China)". Shorten them to the everyday name. */
+const COUNTRY_NAMES = {
+  'United States of America (the)': 'United States',
+  'United Kingdom of Great Britain and Northern Ireland (the)': 'United Kingdom',
+  'Korea (the Republic of)': 'South Korea',
+  "Korea (the Democratic People's Republic of)": 'North Korea',
+  'Russian Federation (the)': 'Russia',
+};
+function cleanCountryName(name) {
+  name = (name || '').trim();
+  return COUNTRY_NAMES[name] || name.replace(/ \(.*\)$/, '');
 }
 
 /* Converts an OTSM epoch-milliseconds value to a Date (stored as a Mongo date). */
