@@ -111,8 +111,11 @@ watcher
     for (const row of data) {
       values = Object.values(row);
       if (reportTag === "open" || reportTag === "closed") {
-        // Store the raw OTSM values under names that follow the report headers.
+        // Store the OTSM values under names that follow the report headers.
         // Columns are read by header name, so their order in the report doesn't matter.
+        // Status, priority, case type, creation source and phase hold the label
+        // OTSM shows users, with the internal value alongside in <field>Id; code
+        // should filter on the Id fields, since labels can be renamed in OTSM.
         // Salesforce-style formatting for the current qmon client is done by the
         // PHP pages (see otsm_sf.php).
         const col = (name) => (row[name] === undefined || row[name] === null) ? "" : String(row[name]);
@@ -125,13 +128,17 @@ watcher
           "title"                   : col("Title"),
           "ownerName"               : lastFirstToFirstLast(col("Owner.Name")), // "Last, First" -> "First Last"; blank = unassigned
           "updatedOn"               : toDate(col("Updated On")),
-          "caseType"                : col("Case Type"),
-          "creationSource"          : col("Creation source"),
+          "caseType"                : otsmLabel("caseType", col("Case Type")),
+          "caseTypeId"              : col("Case Type"),
+          "creationSource"          : otsmLabel("creationSource", col("Creation source")),
+          "creationSourceId"        : col("Creation source"),
           "requestedByName"         : col("Requested by.Name"),
           "createdOn"               : toDate(col("Created On")),
-          "status"                  : col("Status"),
+          "status"                  : otsmLabel("status", col("Status")),
+          "statusId"                : col("Status"),
           "product"                 : col("Product.Display label"),
-          "priority"                : col("Priority"),
+          "priority"                : otsmLabel("priority", col("Priority")),
+          "priorityId"              : col("Priority"),
           "requestedForName"        : lastFirstToFirstLast(col("Requested for.Name")),
           "requestedForEmail"       : col("Requested for.Email"),
           "requestedForOfficePhone" : col("Requested for.Office phone number"),
@@ -145,6 +152,7 @@ watcher
           "closedDateTime"          : toDate(col("Closed DateTime")),
           "lastUpdatedByName"       : col("Last Updated By.Name"),
           "sltNextTargetTime"       : toDate(col("SLT.Next target time")),
+          "phase"                   : otsmLabel("phase", col("Phase Id")),
           "phaseId"                 : col("Phase Id"),
           "assignmentGroupName"     : col("Assignment group.Name"),
           "customerTimeZone"        : col("Customer Time Zone"),
@@ -410,6 +418,68 @@ function cleanCountryName(name) {
 }
 
 /* Converts an OTSM epoch-milliseconds value to a Date (stored as a Mongo date). */
+// Labels the OTSM site shows for the internal values in the report
+// (qmon/notes/otsm-labels.md, read from OTSM cases on 2026-10-13).
+const OTSM_LABELS = {
+  status: {
+    RequestStatusReady:             "Ready",
+    RequestStatusInProgress:        "In Progress",
+    RequestStatusPending:           "Pending End User",
+    RequestStatusNeedsAttention_c:  "Needs Attention",
+    RequestStatusPendingInternal_c: "Pending Internal",
+    RequestStatusComplete:          "Resolved",
+    RequestStatusSuspended:         "Suspended",
+    RequestStatusClosed_c:          "Closed",
+  },
+  priority: {
+    CriticalPriority: "Critical",
+    HighPriority:     "High",
+    MediumPriority:   "Medium",
+    LowPriority:      "Low",
+  },
+  caseType: {
+    TechnicalSupport_c: "Technical Support",
+    Licensing_c:        "Licensing",
+    GeneralInquiry_c:   "General Inquiry",
+    FlexibleCredits_c:  "Flexible Credits",
+  },
+  creationSource: {
+    CreationSourceOther:       "Other",
+    CreationSourceEmail:       "Email",
+    CreationSourceEss:         "Self service Portal",
+    CreationSourceMobile:      "Mobile",
+    CreationSourceLiveSupport: "Live support",
+    CreationSourceTeams:       "Microsoft Teams",
+    CreationSourceVA:          "Virtual Agent",
+    CreationSourceExternal:    "External",
+  },
+  phase: {
+    Close:            "Close",
+    FirstLineSupport: "First line support",
+    Accept:           "Accept",
+    Abandon:          "Abandon",
+    Classify:         "Classify",
+    Escalate:         "Escalate",
+    Approve:          "Approve",
+    Review:           "Review",
+    Fulfill:          "Fulfill",
+  },
+};
+
+// Values with no known label are stored as they are; each is logged once so
+// the table above can be extended.
+const unknownLabels = new Set();
+function otsmLabel(field, value) {
+  if (value === "") return "";
+  const label = OTSM_LABELS[field][value];
+  if (label !== undefined) return label;
+  if (!unknownLabels.has(field + "=" + value)) {
+    unknownLabels.add(field + "=" + value);
+    logger.warn(`No OTSM label for ${field} value "${value}"; storing it unchanged. Add it to OTSM_LABELS.`);
+  }
+  return value;
+}
+
 function toDate(epochMs) {
   if (!epochMs) return null;
   return new Date(Number(epochMs));
