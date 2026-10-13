@@ -132,7 +132,7 @@ watcher
           "caseTypeId"              : col("Case Type"),
           "creationSource"          : otsmLabel("creationSource", col("Creation source")),
           "creationSourceId"        : col("Creation source"),
-          "requestedByName"         : col("Requested by.Name"),
+          "requestedByName"         : lastFirstToFirstLast(col("Requested by.Name")),
           "createdOn"               : toDate(col("Created On")),
           "status"                  : otsmLabel("status", col("Status")),
           "statusId"                : col("Status"),
@@ -150,7 +150,7 @@ watcher
           "ftsHostAccount"          : col("FTS Host Account"),
           "ftsHostPassword"         : col("FTS Host Password").trimStart(), // the report adds leading spaces
           "closedDateTime"          : toDate(col("Closed DateTime")),
-          "lastUpdatedByName"       : col("Last Updated By.Name"),
+          "lastUpdatedByName"       : lastFirstToFirstLast(col("Last Updated By.Name")),
           "sltNextTargetTime"       : toDate(col("SLT.Next target time")),
           "phase"                   : otsmLabel("phase", col("Phase Id")),
           "phaseId"                 : col("Phase Id"),
@@ -492,5 +492,8 @@ function lastFirstToFirstLast(name) {
   const firstCommaIndex = raw.indexOf(',');
   const lastName = raw.substring(0, firstCommaIndex).trim();
   const restOfName = raw.substring(firstCommaIndex + 1).trim();
+  // OTSM integration accounts repeat the account name in both parts
+  // ("csotsm_fts_intuser_829453953, csotsm_fts_intuser_829453953")
+  if (lastName === restOfName) return lastName;
   return `${restOfName} ${lastName}`.trim();
 }
