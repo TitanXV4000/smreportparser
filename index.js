@@ -38,7 +38,15 @@ casesUpdatedEmitter
     logger.debug("Received 'cases updated' event from casesUpdatedEmitter.");
     // Cross-collection cleanups removed; Mongo upsert handles lifecycle state changes dynamically.
   })
-  ;
+  .on('csv parsed', async function(filename) {
+    logger.debug("Received 'csv parsed' event from casesUpdatedEmitter.");
+    processingCSV = false;
+    await deleteFile(filename);
+  })
+  .on('cases parsed', async function(collection, cases) {
+    logger.debug("Received 'cases parsed' event from casesUpdatedEmitter.");
+    await uploadToMongo(collection, cases);
+  });
 
 
 var watcher = chokidar.watch(config.DOWNLOAD_PATH, 
@@ -52,33 +60,18 @@ var watcher = chokidar.watch(config.DOWNLOAD_PATH,
 
 watcher
   .on('ready', () => {
-    const waiting = fs.readdirSync(config.DOWNLOAD_PATH).filter(f => /\.(csv|json)$/i.test(f)).sort();
-    if (waiting.length) logger.info(`Processing ${waiting.length} file(s) left from before startup, oldest first.`);
-    waiting.forEach(f => enqueue(path.join(config.DOWNLOAD_PATH, f)));
     logger.info('Initial scan complete. Ready to process new reports.');
     initialized = true;
   })
   .on('change', function(filePath) { logger.debug('File ' + filePath + ' has been changed.'); })
   .on('unlink', function(filePath) { logger.debug('File ' + filePath + ' has been removed.'); })
   .on('error', function(e) { logger.error(e.toLocaleString()); })
-  .on('add', function(filePath) {
-    if (!initialized) return;          // files present at startup are queued from 'ready'
-    enqueue(filePath);
-  });
-
-/* Files are processed one at a time, oldest first (names start with a timestamp), so a
-   backlog left while the parser was stopped is read in order and nothing is skipped.
-   API batches carry changes only once, so every file must be read. */
-var queue = Promise.resolve();
-function enqueue(filePath) {
-  if (!/\.(csv|json)$/i.test(filePath)) { logger.debug(`Ignoring ${filePath}`); return; }
-  queue = queue.then(() => processFile(filePath)).catch(err => {
-    // The file stays in place; it is retried when the parser restarts
-    logger.error(`Failed to process ${filePath}: ${err && err.stack ? err.stack : err}`);
-  });
-}
-
-async function processFile(filePath) {
+  .on('add', async function(filePath) {
+    /* Exit function immediately if not initialized or the previous csv file 
+       is still being processed. */
+    if (!initialized/* || processingCSV*/) return;
+    // Only finished report files: CSV exports (smexporter) or JSON batches (smexporter API mode)
+    if (!/\.(csv|json)$/i.test(filePath)) { logger.debug(`Ignoring ${filePath}`); return; }
 
     /* Initialization complete. Time to parse... */
     processingCSV = true;
@@ -206,11 +199,11 @@ async function processFile(filePath) {
       }
     }
     logger.silly("Created case objects: " + cases);
-    // Write to Mongo first; the file is deleted only after that succeeded
-    await uploadToMongo(targetCollection, cases);
+    casesUpdatedEmitter.emit(`cases parsed`, targetCollection, cases);
+
     lastUpdateTime = new Date();
-    await deleteFile(filePath);
-}
+    casesUpdatedEmitter.emit('csv parsed', filePath);
+  });
 
 /* Accepts list of case objects to upload to mongo */
 async function uploadToMongo(collectionName, cases) {
@@ -235,7 +228,6 @@ async function uploadToMongo(collectionName, cases) {
     logger.debug("Mongo updated successfully.");
   } catch (e) {
     logger.error(e.toLocaleString());
-    throw e;                           // the caller keeps the file when the write failed
   } finally {
     await client.close();
     logger.debug("Mongo connection closed.");
