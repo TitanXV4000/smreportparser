@@ -70,6 +70,8 @@ watcher
     /* Exit function immediately if not initialized or the previous csv file 
        is still being processed. */
     if (!initialized/* || processingCSV*/) return;
+    // Only finished report files: CSV exports (smexporter) or JSON batches (smexporter API mode)
+    if (!/\.(csv|json)$/i.test(filePath)) { logger.debug(`Ignoring ${filePath}`); return; }
 
     /* Initialization complete. Time to parse... */
     processingCSV = true;
@@ -95,8 +97,9 @@ watcher
         reportContent = reportContent.replace(/^\uFEFF/, '');
     }
 
-    // 3. Pass the clean string data directly to your parser
-    var data = await parse(reportContent, {
+    // 3. JSON batches from the API exporter are already rows keyed by the report's
+    //    column names (plus "Description"); CSV exports go through the CSV parser.
+    var data = filePath.toLowerCase().endsWith('.json') ? JSON.parse(reportContent) : await parse(reportContent, {
         columns: true,
         skip_empty_lines: true,
         relax_quotes: true,        // Handles loose or unescaped quotes within fields
@@ -169,6 +172,9 @@ watcher
         const loc = customerLocation(doc);
         doc.customerRegion  = loc.region;
         doc.customerCountry = loc.country;
+        // Description comes only in API batches, and only for cases that changed,
+        // so it is set when present and otherwise left as stored.
+        if (row.Description !== undefined) doc.description = row.Description === null ? "" : String(row.Description);
         cases.unshift(doc);
       } else if (reportTag === "kb") {
         url = `https://microfocus.lightning.force.com/lightning/r/Knowledge__kav/${values[1]}/view`
@@ -239,16 +245,9 @@ async function upsertToCollection(collection, docs) {
   const bulkOps = [];
 
   for (const doc of docs) {
-    const filter = { _id: doc._id };
-    bulkOps.push(
-      { replaceOne :
-        {
-          "filter"      : filter,
-          "replacement" : doc,
-          "upsert"      : true
-        }
-      }
-    );
+    // $set rather than replace: fields a batch doesn't carry (description) keep their stored value
+    const { _id, ...fields } = doc;
+    bulkOps.push({ updateOne: { filter: { _id: _id }, update: { $set: fields }, upsert: true } });
   }
 
   const result = await collection.bulkWrite(bulkOps);
