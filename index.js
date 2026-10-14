@@ -168,7 +168,7 @@ watcher
         };
         const loc = customerLocation(doc);
         doc.customerRegion  = loc.region;
-        doc.customerCountry = loc.country;
+        doc.customerCountry = loc.country || fallbackCountry(doc);
         cases.unshift(doc);
       } else if (reportTag === "kb") {
         url = `https://microfocus.lightning.force.com/lightning/r/Knowledge__kav/${values[1]}/view`
@@ -401,6 +401,27 @@ function timeZoneRegion(tz) {
   if (/^(Europe|Africa)\//.test(tz) || /^(Egypt|Turkey|Israel|Iran|GB|Eire)$/.test(tz) || EMEA_ASIA_TIME_ZONES.test(tz)) return 'EMEA';
   if (/^(Asia|Australia|Pacific|Indian)\//.test(tz) || /^(Japan|Singapore|Hongkong|PRC|ROC|ROK|NZ)$/.test(tz)) return 'APAC';
   return '';
+}
+
+/* Country when the location gives none, from time zones that point to one country
+   reliably (checked 2026-10-14 against cases whose country is known): first the
+   requester's own time zone, then the customer time zone (usually the company's).
+   Canada/Eastern and America/Montreal are OTSM defaults (about 37% Canada) and other
+   zones are mixed (customer Europe/London: 46% UK), so they're left out. Phone country
+   codes were tried and dropped: they show where a person is from, not where they work
+   (e.g. +91 numbers at North American companies). */
+const REQUESTER_TIME_ZONE_COUNTRIES = {     // 94-100% matched
+  'Europe/Berlin': 'Germany', 'Asia/Kolkata': 'India', 'Asia/Bangkok': 'Thailand',
+  'America/Los_Angeles': 'United States', 'Europe/Helsinki': 'Finland', 'Australia/Sydney': 'Australia',
+  'Japan': 'Japan', 'Europe/London': 'United Kingdom', 'Asia/Dubai': 'United Arab Emirates',
+};
+const CUSTOMER_TIME_ZONE_COUNTRIES = {      // 87-100% matched
+  'Asia/Kolkata': 'India', 'Japan': 'Japan', 'Australia/Sydney': 'Australia',
+  'Asia/Bangkok': 'Thailand', 'Europe/Berlin': 'Germany', 'Europe/Helsinki': 'Finland',
+};
+function fallbackCountry(doc) {
+  return REQUESTER_TIME_ZONE_COUNTRIES[(doc.requestedForTimeZone || '').trim()] ||
+    CUSTOMER_TIME_ZONE_COUNTRIES[(doc.customerTimeZone || '').trim()] || '';
 }
 
 /* OTSM country names are the long ISO forms, e.g. "United States of America (the)",
